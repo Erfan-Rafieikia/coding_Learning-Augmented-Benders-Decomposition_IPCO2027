@@ -33,8 +33,9 @@ Supported predictor names
 
 ``PARAMETRIC_DIRECT_RIDGE_PMEDIAN_MEAN`` (IPCO 2027 version)
     A warm-up-trained ridge model f_theta(z_m, g_m(x)) that predicts the dual
-    vector itself (no transfer baseline, no residual target). The model has a
-    learned constant term. A raw prediction is made feasible along the segment
+    vector itself (no transfer baseline, no residual target). The map is linear
+    with no intercept, on unstandardized z_m and an uncentred low-dimensional
+    projection of g_m(x). A raw prediction is made feasible along the segment
     from the mean of the current exact duals in M_e (equal weights) toward the
     raw prediction, using the same closed-form step and objective guard.
     M_e is chosen by the feature-space p-median.
@@ -865,8 +866,9 @@ def _ridge_fit(
 
 
 class _RightHandSideReducer:
-    def __init__(self, dimension: int):
+    def __init__(self, dimension: int, standardize: bool = True):
         self.dimension = int(dimension)
+        self.standardize = bool(standardize)
         self.mean = None
         self.scale = None
         self.components = None
@@ -874,9 +876,15 @@ class _RightHandSideReducer:
     @profiled("rhs_projection_dimensionality_reduction")
     def fit_transform(self, matrix: np.ndarray) -> np.ndarray:
         matrix = np.asarray(matrix, dtype=float)
-        self.mean = matrix.mean(axis=0)
-        self.scale = matrix.std(axis=0)
-        self.scale[self.scale <= 1e-12] = 1.0
+        if self.standardize:
+            self.mean = matrix.mean(axis=0)
+            self.scale = matrix.std(axis=0)
+            self.scale[self.scale <= 1e-12] = 1.0
+        else:
+            # IPCO direct model: no centring or scaling, so the projected
+            # state keeps its level and the linear map needs no intercept.
+            self.mean = np.zeros(matrix.shape[1])
+            self.scale = np.ones(matrix.shape[1])
         standardized = (matrix - self.mean) / self.scale
         _, _, vt = np.linalg.svd(standardized, full_matrices=False)
         q = max(1, min(self.dimension, vt.shape[0], vt.shape[1]))
@@ -1140,9 +1148,16 @@ class ParametricDualPredictor:
                     if anchor in self.counts:
                         self.counts[anchor] += weight
 
-        self.feature_scaler = FeatureScaler.fit(
-            self.feature_vectors, self.selected, self.counts
-        )
+        if self.is_direct:
+            # IPCO direct model: raw (unstandardized) representations.
+            dim = len(next(iter(self.feature_vectors.values())))
+            self.feature_scaler = FeatureScaler(
+                mean=np.zeros(dim), scale=np.ones(dim)
+            )
+        else:
+            self.feature_scaler = FeatureScaler.fit(
+                self.feature_vectors, self.selected, self.counts
+            )
         return selected, mapping
 
     @profiled("representative_assignment_nearest_weighted")
@@ -1417,7 +1432,9 @@ class ParametricDualPredictor:
                 observation_weights.append(1.0)
 
         rhs_dimension = int(self.parameters.get("parametric_rhs_dim", 3))
-        self.rhs_reducer = _RightHandSideReducer(rhs_dimension)
+        self.rhs_reducer = _RightHandSideReducer(
+            rhs_dimension, standardize=not self.is_direct
+        )
         rhs_design = self.rhs_reducer.fit_transform(np.asarray(raw_g, dtype=float))
         static_design = np.asarray(static_design, dtype=float)
         design = np.concatenate([static_design, rhs_design], axis=1)
@@ -1429,12 +1446,7 @@ class ParametricDualPredictor:
                 np.full(rhs_design.shape[1], beta_g),
             ]
         )
-        if self.is_direct:
-            # Features are centred, so a direct dual model needs a learned
-            # constant term (left unpenalized). This is a regression constant
-            # fitted on warm-up data, not the per-iteration transfer baseline.
-            design = np.concatenate([np.ones((design.shape[0], 1)), design], axis=1)
-            regularization = np.concatenate([[0.0], regularization])
+
         coefficient, condition = _ridge_fit(
             design,
             np.asarray(residual_targets, dtype=float),
@@ -1478,8 +1490,9 @@ class ParametricDualPredictor:
                 )
                 design = np.concatenate([self._feature(sid), rhs_feature])
                 if self.is_direct:
+                    # Linear map with no intercept: lambda = Theta [z_m; s_m(x)].
                     predictions[sid] = self.codec.canonicalize(
-                        self.warmup_coefficient @ np.concatenate(([1.0], design))
+                        self.warmup_coefficient @ design
                     )
                     continue
                 base = self.current_bases.get(int(sid), self.current_base)
