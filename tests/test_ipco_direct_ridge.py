@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from Dual_Prediction.parametric import (  # noqa: E402
     DIRECT_RIDGE_PREDICTORS,
     PARAMETRIC_DIRECT_RIDGE_PMEDIAN_MEAN,
+    PARAMETRIC_DIRECT_RIDGE_RANDOM_MEAN,
     PARAMETRIC_PREDICTORS,
     RHS_RIDGE_PREDICTORS,
     ParametricDualPredictor,
@@ -89,6 +90,17 @@ class DirectRidgeTests(unittest.TestCase):
             g = pred.codec.objective_coefficients(sid, x)
             # Objective guard: never weaker than the mean anchor at the current x.
             self.assertGreaterEqual(float(g @ vec), float(g @ mean) - 1e-9)
+
+
+    def test_random_selection_is_seeded_and_runs(self):
+        params = dict(self.params, parametric_random_selection_seed=7)
+        a = ParametricDualPredictor(PARAMETRIC_DIRECT_RIDGE_RANDOM_MEAN, "SCFLP", self.data, parameters=params)
+        b = ParametricDualPredictor(PARAMETRIC_DIRECT_RIDGE_RANDOM_MEAN, "SCFLP", self.data, parameters=params)
+        sa, _ = a.select(self.features, 3)
+        sb, _ = b.select(self.features, 3)
+        self.assertEqual(list(sa), list(sb))
+        self.assertEqual(len(set(sa)), 3)
+        self.assertEqual(a.anchor_method, "MEAN_EXACT")
 
 
 if __name__ == "__main__":

@@ -87,8 +87,12 @@ PARAMETRIC_RHS_RIDGE_CLUSTER_ANCHOR = "PARAMETRIC_RHS_RIDGE_CLUSTER_ANCHOR"
 PARAMETRIC_RHS_RIDGE_PMEDIAN_NEAREST_ANCHOR = "PARAMETRIC_RHS_RIDGE_PMEDIAN_NEAREST_ANCHOR"
 # IPCO 2027: direct dual prediction with a mean-of-exact-duals reference point.
 PARAMETRIC_DIRECT_RIDGE_PMEDIAN_MEAN = "PARAMETRIC_DIRECT_RIDGE_PMEDIAN_MEAN"
+# Variant (not adopted; branch variant/random-Me): M_e drawn uniformly at random.
+PARAMETRIC_DIRECT_RIDGE_RANDOM_MEAN = "PARAMETRIC_DIRECT_RIDGE_RANDOM_MEAN"
 
-DIRECT_RIDGE_PREDICTORS = frozenset({PARAMETRIC_DIRECT_RIDGE_PMEDIAN_MEAN})
+DIRECT_RIDGE_PREDICTORS = frozenset(
+    {PARAMETRIC_DIRECT_RIDGE_PMEDIAN_MEAN, PARAMETRIC_DIRECT_RIDGE_RANDOM_MEAN}
+)
 
 RHS_RIDGE_PREDICTORS = frozenset(
     {
@@ -800,6 +804,38 @@ def solve_parametric_pmedian_selection(
     return selected, mapping
 
 
+def random_exact_selection(
+    feature_vectors: Mapping[int, Sequence[float]],
+    p: int,
+    parameters: Optional[Mapping] = None,
+) -> Tuple[Sequence[int], Dict]:
+    """Draw M_e uniformly at random (seeded). The nearest-representative mapping is
+    kept only so the feature scaler and diagnostics see the same structure as the
+    p-median version; the mean-of-exact-duals anchor does not use it."""
+    parameters = dict(parameters or {})
+    ids = sorted(int(sid) for sid in feature_vectors)
+    n = len(ids)
+    if p <= 0 or p > n:
+        raise ValueError(f"p must be in [1, {n}], got {p}.")
+    seed = int(parameters.get("parametric_random_selection_seed", 42))
+    rng = np.random.default_rng(seed)
+    selected = sorted(int(v) for v in rng.choice(ids, size=p, replace=False))
+    selected_set = set(selected)
+    distance = _distance_matrix(feature_vectors, ids)
+    position = {sid: pos for pos, sid in enumerate(ids)}
+    mapping = {}
+    for row, sid in enumerate(ids):
+        if sid in selected_set:
+            continue
+        representative = min(selected, key=lambda t: (distance[row, position[t]], t))
+        mapping[sid] = {
+            "representative": representative,
+            "distance": float(distance[row, position[representative]]),
+        }
+    mapping["__random_selection_info__"] = {"seed": seed, "selected": list(selected)}
+    return selected, mapping
+
+
 @profiled("regression_weight_training")
 def _ridge_fit(
     design: np.ndarray,
@@ -1072,6 +1108,11 @@ class ParametricDualPredictor:
             self.all_transfer_mapping = dict(
                 mapping.get("__all_transfer_mapping__", {})
             )
+        elif self.variant == PARAMETRIC_DIRECT_RIDGE_RANDOM_MEAN:
+            selected, mapping = random_exact_selection(
+                self.feature_vectors, p, self.parameters
+            )
+            self.all_transfer_mapping = {}
         else:
             selected, mapping = solve_parametric_pmedian_selection(
                 self.feature_vectors, p, self.parameters
