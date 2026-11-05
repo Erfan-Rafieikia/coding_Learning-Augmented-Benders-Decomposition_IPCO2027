@@ -1963,6 +1963,8 @@ def main():
                         subproblem_selection_method_value = "p-median-nearest-representative"
                     elif params.get('predictor_type') == 'PARAMETRIC_RHS_RIDGE_PMEDIAN_NEAREST_ANCHOR':
                         subproblem_selection_method_value = "p-median-nearest-representative-rhs-ridge"
+                    elif params.get('predictor_type') == 'PARAMETRIC_DIRECT_RIDGE_PMEDIAN_MEAN':
+                        subproblem_selection_method_value = "p-median-direct-ridge-mean-anchor"
                     elif params.get('predictor_type') in PARAMETRIC_PREDICTORS:
                         subproblem_selection_method_value = "p-median"
                 else:

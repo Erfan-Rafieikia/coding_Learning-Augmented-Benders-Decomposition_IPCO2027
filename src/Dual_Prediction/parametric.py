@@ -31,6 +31,14 @@ Supported predictor names
     The same warm-up-trained RHS-Ridge residual model using the CLUSTERING
     transfer weights as its feasible, scenario-specific anchor.
 
+``PARAMETRIC_DIRECT_RIDGE_PMEDIAN_MEAN`` (IPCO 2027 version)
+    A warm-up-trained ridge model f_theta(z_m, g_m(x)) that predicts the dual
+    vector itself (no transfer baseline, no residual target). The model has a
+    learned constant term. A raw prediction is made feasible along the segment
+    from the mean of the current exact duals in M_e (equal weights) toward the
+    raw prediction, using the same closed-form step and objective guard.
+    M_e is chosen by the feature-space p-median.
+
 The numerical ridge and feasibility routines do not require Gurobi.  Gurobi
 is required only for the p-median MIP and the two constrained training models.
 """
@@ -77,6 +85,10 @@ PARAMETRIC_RHS_RIDGE_REPAIR = "PARAMETRIC_RHS_RIDGE_REPAIR"
 PARAMETRIC_RHS_RIDGE_TREE_ANCHOR = "PARAMETRIC_RHS_RIDGE_TREE_ANCHOR"
 PARAMETRIC_RHS_RIDGE_CLUSTER_ANCHOR = "PARAMETRIC_RHS_RIDGE_CLUSTER_ANCHOR"
 PARAMETRIC_RHS_RIDGE_PMEDIAN_NEAREST_ANCHOR = "PARAMETRIC_RHS_RIDGE_PMEDIAN_NEAREST_ANCHOR"
+# IPCO 2027: direct dual prediction with a mean-of-exact-duals reference point.
+PARAMETRIC_DIRECT_RIDGE_PMEDIAN_MEAN = "PARAMETRIC_DIRECT_RIDGE_PMEDIAN_MEAN"
+
+DIRECT_RIDGE_PREDICTORS = frozenset({PARAMETRIC_DIRECT_RIDGE_PMEDIAN_MEAN})
 
 RHS_RIDGE_PREDICTORS = frozenset(
     {
@@ -84,6 +96,7 @@ RHS_RIDGE_PREDICTORS = frozenset(
         PARAMETRIC_RHS_RIDGE_TREE_ANCHOR,
         PARAMETRIC_RHS_RIDGE_CLUSTER_ANCHOR,
         PARAMETRIC_RHS_RIDGE_PMEDIAN_NEAREST_ANCHOR,
+        *DIRECT_RIDGE_PREDICTORS,
     }
 )
 
@@ -929,8 +942,11 @@ class ParametricDualPredictor:
         self.current_model = None
         self.rhs_reducer = None
         self.all_transfer_mapping = {}
+        self.is_direct = self.variant in DIRECT_RIDGE_PREDICTORS
         self.anchor_method = (
-            "TREE"
+            "MEAN_EXACT"
+            if self.is_direct
+            else "TREE"
             if self.variant == PARAMETRIC_RHS_RIDGE_TREE_ANCHOR
             else "CLUSTERING"
             if self.variant == PARAMETRIC_RHS_RIDGE_CLUSTER_ANCHOR
@@ -1091,6 +1107,9 @@ class ParametricDualPredictor:
     @profiled("representative_assignment_nearest_weighted")
     def _feasible_anchor(self, solved_duals: Mapping[int, Mapping], sid: int) -> np.ndarray:
         """Return the current feasible anchor for one scenario."""
+        if self.anchor_method == "MEAN_EXACT":
+            return self._mean_exact_anchor(solved_duals)
+
         if self.anchor_method == "PMEDIAN_COUNT":
             return weighted_feasible_average(self.codec, solved_duals, self.counts)
 
@@ -1148,6 +1167,14 @@ class ParametricDualPredictor:
                 f"The {self.anchor_method} convex anchor for scenario {sid} is not dual feasible."
             )
         return anchor
+
+    def _mean_exact_anchor(self, solved_duals: Mapping[int, Mapping]) -> np.ndarray:
+        """Equal-weight mean of the current exact duals of M_e (feasible: D is common and convex)."""
+        missing = [sid for sid in self.selected if sid not in solved_duals]
+        if missing:
+            raise KeyError(f"Exact duals of selected scenarios {missing[:5]} are unavailable.")
+        exact = {int(sid): solved_duals[sid] for sid in self.selected}
+        return weighted_feasible_average(self.codec, exact, None)
 
     def _configure_gurobi(self, model):
         model.Params.OutputFlag = int(self.parameters.get("parametric_solver_output", 0))
@@ -1334,11 +1361,15 @@ class ParametricDualPredictor:
             exact_round = {sid: round_duals[sid] for sid in self.selected}
             first_stage = first_stage_by_iteration[iteration]
             for sid in scenario_ids:
-                base = self._feasible_anchor(exact_round, sid)
                 static_design.append(self._feature(sid))
                 g = self.codec.objective_coefficients(sid, first_stage)
                 raw_g.append(g)
-                residual_targets.append(self.codec.flatten(round_duals[sid]) - base)
+                if self.is_direct:
+                    # IPCO variant: learn the dual itself (no baseline).
+                    residual_targets.append(self.codec.flatten(round_duals[sid]))
+                else:
+                    base = self._feasible_anchor(exact_round, sid)
+                    residual_targets.append(self.codec.flatten(round_duals[sid]) - base)
                 # Every warm-up subproblem is observed directly. Transfer weights
                 # enter through the feasible anchor; the regression observations
                 # themselves receive equal statistical weight.
@@ -1357,6 +1388,12 @@ class ParametricDualPredictor:
                 np.full(rhs_design.shape[1], beta_g),
             ]
         )
+        if self.is_direct:
+            # Features are centred, so a direct dual model needs a learned
+            # constant term (left unpenalized). This is a regression constant
+            # fitted on warm-up data, not the per-iteration transfer baseline.
+            design = np.concatenate([np.ones((design.shape[0], 1)), design], axis=1)
+            regularization = np.concatenate([[0.0], regularization])
         coefficient, condition = _ridge_fit(
             design,
             np.asarray(residual_targets, dtype=float),
@@ -1399,6 +1436,11 @@ class ParametricDualPredictor:
                     self.codec.objective_coefficients(sid, first_stage_values)
                 )
                 design = np.concatenate([self._feature(sid), rhs_feature])
+                if self.is_direct:
+                    predictions[sid] = self.codec.canonicalize(
+                        self.warmup_coefficient @ np.concatenate(([1.0], design))
+                    )
+                    continue
                 base = self.current_bases.get(int(sid), self.current_base)
                 if base is None:
                     raise KeyError(f"No current feasible anchor is available for scenario {sid}.")
@@ -1450,10 +1492,15 @@ class ParametricDualPredictor:
                 # The latter are used only by diagnostics; Phase-2 predictions are
                 # still produced only for the prediction set.
                 anchor_ids = sorted(set(predicted_ids).union(self.selected))
-                self.current_bases = {
-                    sid: self._feasible_anchor(solved_duals, sid)
-                    for sid in anchor_ids
-                }
+                if self.anchor_method == "MEAN_EXACT":
+                    # One common reference point for all scenarios; compute once.
+                    mean_anchor = self._mean_exact_anchor(solved_duals)
+                    self.current_bases = {sid: mean_anchor for sid in anchor_ids}
+                else:
+                    self.current_bases = {
+                        sid: self._feasible_anchor(solved_duals, sid)
+                        for sid in anchor_ids
+                    }
                 first_anchor_sid = anchor_ids[0] if anchor_ids else None
                 base = (
                     self.current_bases[first_anchor_sid]
