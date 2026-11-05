@@ -1,0 +1,20 @@
+name: bd_ml
+channels:
+  - conda-forge
+channel_priority: strict
+dependencies:
+  - python=3.11
+  - pip
+  - numpy
+  - pandas
+  - scipy
+  - scikit-learn
+  - matplotlib
+  - seaborn
+  - openpyxl
+  - joblib
+  - gensim
+  - pip:
+      # Required for SMPS/MPS loading utilities used by Problem/data.py
+      - pysmps==1.5.6
+      - gurobipy==12.0.0+computecanada
