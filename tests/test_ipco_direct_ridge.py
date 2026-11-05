@@ -64,12 +64,17 @@ class DirectRidgeTests(unittest.TestCase):
         self.assertIn(PARAMETRIC_DIRECT_RIDGE_PMEDIAN_MEAN, RHS_RIDGE_PREDICTORS)
         self.assertIn(PARAMETRIC_DIRECT_RIDGE_PMEDIAN_MEAN, PARAMETRIC_PREDICTORS)
 
-    def test_constant_term_and_no_baseline_in_raw_prediction(self):
+    def test_no_intercept_no_standardization_no_baseline(self):
         pred = self._trained()
         self.assertTrue(pred.is_direct)
         self.assertEqual(pred.anchor_method, "MEAN_EXACT")
-        # constant + 2 static features + 2 RHS components
-        self.assertEqual(pred.warmup_coefficient.shape[1], 1 + 2 + 2)
+        # No intercept: 2 static features + 2 RHS components, no constant column.
+        self.assertEqual(pred.warmup_coefficient.shape[1], 2 + 2)
+        # No standardization of z or g.
+        np.testing.assert_array_equal(pred.feature_scaler.mean, np.zeros(2))
+        np.testing.assert_array_equal(pred.feature_scaler.scale, np.ones(2))
+        np.testing.assert_array_equal(pred.rhs_reducer.mean, np.zeros(3 + 2))
+        np.testing.assert_array_equal(pred.rhs_reducer.scale, np.ones(3 + 2))
         pred.current_bases = {}
         pred.current_base = None  # direct raw prediction must not need a baseline
         raw = pred._raw_predictions([0, 1], None, {0: 0.4, 1: 0.6})
