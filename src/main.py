@@ -1967,6 +1967,10 @@ def main():
                         subproblem_selection_method_value = "p-median-direct-ridge-mean-anchor"
                     elif params.get('predictor_type') == 'PARAMETRIC_DIRECT_RIDGE_RANDOM_MEAN':
                         subproblem_selection_method_value = "random-direct-ridge-mean-anchor"
+                    elif params.get('predictor_type') == 'PARAMETRIC_DIRECT_RIDGE_PMEDIAN_MEAN_EXACTFB':
+                        subproblem_selection_method_value = "p-median-direct-ridge-exact-fallback"
+                    elif params.get('predictor_type') == 'PARAMETRIC_DIRECT_RIDGE_RANDOM_MEAN_EXACTFB':
+                        subproblem_selection_method_value = "random-direct-ridge-exact-fallback"
                     elif params.get('predictor_type') in PARAMETRIC_PREDICTORS:
                         subproblem_selection_method_value = "p-median"
                 else:
@@ -2124,6 +2128,7 @@ def main():
                     "parametric_direct_negative_clipped": parametric_diagnostics.get('direct_negative_clipped'),
                     "parametric_direct_gamma_evaluations": parametric_diagnostics.get('direct_gamma_evaluations'),
                     "parametric_direct_gamma_positive": parametric_diagnostics.get('direct_gamma_positive'),
+                    "parametric_direct_exact_fallback_requested": parametric_diagnostics.get('direct_exact_fallback_requested'),
                     "parametric_objective_guard_enabled": parametric_diagnostics.get('objective_guard_enabled'),
                     "parametric_objective_guard_checks": parametric_diagnostics.get('objective_guard_checks'),
                     "parametric_objective_guard_accepted": parametric_diagnostics.get('objective_guard_accepted'),

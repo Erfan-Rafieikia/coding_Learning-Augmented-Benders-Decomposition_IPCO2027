@@ -17,7 +17,7 @@ import pandas as pd
 
 KEEP = re.compile(r"(raw_infeasible|raw_predictions|repaired_predictions|full_reversions|"
                   r"certification_failures|objective_guard_(checks|accepted|rejected|skipped)|"
-                  r"gamma_(mean|median|min|max)|repair_gamma|direct_|prediction_opportunities|training_failures)", re.I)
+                  r"gamma_(mean|median|min|max)|repair_gamma|direct_|exact_fallback|prediction_opportunities|training_failures)", re.I)
 
 
 def main() -> int:
@@ -42,7 +42,7 @@ def main() -> int:
                 states[m.group(1)] = (st.split()[0], el)
     rows = []
     for _, t in man.iterrows():
-        rec = {"task": t.task_id, "instance": t.instance_label, "method": str(t.method).replace("PARAMETRIC_DIRECT_RIDGE_PMEDIAN_MEAN", "IPCO_PMEDIAN").replace("PARAMETRIC_DIRECT_RIDGE_RANDOM_MEAN", "IPCO_RANDOM"), "ratio": t.selected_ratio,
+        rec = {"task": t.task_id, "instance": t.instance_label, "method": str(t.method).replace("PARAMETRIC_DIRECT_RIDGE_PMEDIAN_MEAN", "IPCO_PMEDIAN").replace("PARAMETRIC_DIRECT_RIDGE_RANDOM_MEAN", "IPCO_RANDOM").replace("_EXACTFB", "_EXACT"), "ratio": t.selected_ratio,
                "slurm": states.get(t.task_id, ("UNKNOWN", ""))[0],
                "elapsed": states.get(t.task_id, ("", ""))[1]}
         dirs = sorted(glob.glob(os.path.join(results, f"task_{t.task_id}_*")), key=os.path.getmtime)

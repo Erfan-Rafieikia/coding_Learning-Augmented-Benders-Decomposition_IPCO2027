@@ -31,7 +31,8 @@ import subprocess
 import sys
 
 TEMPLATE_METHOD = "PARAMETRIC_RHS_RIDGE_PMEDIAN_NEAREST_ANCHOR"
-IPCO_METHODS = ("PARAMETRIC_DIRECT_RIDGE_PMEDIAN_MEAN", "PARAMETRIC_DIRECT_RIDGE_RANDOM_MEAN")
+IPCO_METHODS = ("PARAMETRIC_DIRECT_RIDGE_PMEDIAN_MEAN", "PARAMETRIC_DIRECT_RIDGE_RANDOM_MEAN",
+                "PARAMETRIC_DIRECT_RIDGE_PMEDIAN_MEAN_EXACTFB", "PARAMETRIC_DIRECT_RIDGE_RANDOM_MEAN_EXACTFB")
 PREDICTOR_KEY = "predictor_ML_Augmented_BD_grid"
 
 
@@ -103,7 +104,7 @@ def main() -> int:
             chosen.append((one(rows, f"{label} {TEMPLATE_METHOD} ratio {ratio}"), "ipco"))
 
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    tag = "pmedian" if args.method.endswith("PMEDIAN_MEAN") else "random"
+    tag = ("pmedian" if "PMEDIAN" in args.method else "random") + ("_exactfb" if args.method.endswith("_EXACTFB") else "")
     root = args.results_root.expanduser().resolve() / "MASTER_RUNS" / f"ipco_{args.label}_{tag}_{stamp}"
     (root / "configs").mkdir(parents=True, exist_ok=False)
     (root / "SLURM_LOGS").mkdir()
