@@ -11,6 +11,7 @@ from Dual_Prediction.parametric import (  # noqa: E402
     DIRECT_RIDGE_PREDICTORS,
     PARAMETRIC_DIRECT_RIDGE_PMEDIAN_MEAN,
     PARAMETRIC_DIRECT_RIDGE_PMEDIAN_MEAN_EXACTFB,
+    PARAMETRIC_DIRECT_RIDGE_PMEDIAN_MEAN_V0,
     PARAMETRIC_PREDICTORS,
     RHS_RIDGE_PREDICTORS,
     ParametricDualPredictor,
@@ -160,6 +161,13 @@ class DirectRidgeTests(unittest.TestCase):
         vec = pred.codec.flatten(pred.predict([1])[1])
         np.testing.assert_allclose(vec, [15.0, 0.0])
         self.assertEqual(pred.objective_guard_accepted, 1)
+
+
+    def test_start_at_mean_variant_settings(self):
+        v0 = ParametricDualPredictor(PARAMETRIC_DIRECT_RIDGE_PMEDIAN_MEAN_V0, "SCFLP", self.data, parameters=self.params)
+        v1 = ParametricDualPredictor(PARAMETRIC_DIRECT_RIDGE_PMEDIAN_MEAN, "SCFLP", self.data, parameters=self.params)
+        self.assertEqual((v0.direct_anchor_shrink, v0.direct_clip_negative, v0.exact_fallback), (0.0, False, False))
+        self.assertEqual((v1.direct_anchor_shrink, v1.direct_clip_negative), (0.05, True))
 
 
 if __name__ == "__main__":

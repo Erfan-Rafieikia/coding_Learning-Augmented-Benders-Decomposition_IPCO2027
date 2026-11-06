@@ -93,9 +93,13 @@ PARAMETRIC_DIRECT_RIDGE_PMEDIAN_MEAN = "PARAMETRIC_DIRECT_RIDGE_PMEDIAN_MEAN"
 # prediction is solved exactly instead (the callback's per-subproblem fallback).
 PARAMETRIC_DIRECT_RIDGE_PMEDIAN_MEAN_EXACTFB = "PARAMETRIC_DIRECT_RIDGE_PMEDIAN_MEAN_EXACTFB"
 EXACT_FALLBACK_PREDICTORS = frozenset({PARAMETRIC_DIRECT_RIDGE_PMEDIAN_MEAN_EXACTFB})
+# First IPCO version, kept for comparison: repair starts at the mean itself and
+# negative entries are not clipped (eps = 0, no clipping).
+PARAMETRIC_DIRECT_RIDGE_PMEDIAN_MEAN_V0 = "PARAMETRIC_DIRECT_RIDGE_PMEDIAN_MEAN_V0"
+START_AT_MEAN_PREDICTORS = frozenset({PARAMETRIC_DIRECT_RIDGE_PMEDIAN_MEAN_V0})
 
 DIRECT_RIDGE_PREDICTORS = frozenset(
-    {PARAMETRIC_DIRECT_RIDGE_PMEDIAN_MEAN, *EXACT_FALLBACK_PREDICTORS}
+    {PARAMETRIC_DIRECT_RIDGE_PMEDIAN_MEAN, *EXACT_FALLBACK_PREDICTORS, *START_AT_MEAN_PREDICTORS}
 )
 
 RHS_RIDGE_PREDICTORS = frozenset(
@@ -962,11 +966,19 @@ class ParametricDualPredictor:
         self.direct_exact_fallback_requested = 0
         # IPCO repair settings (used only by the direct predictors). The
         # exact-fallback variant applies no closed-form fix at all by default.
-        clip = self.parameters.get("parametric_direct_clip_negative", not self.exact_fallback)
+        self.start_at_mean = self.variant in START_AT_MEAN_PREDICTORS
+        clip = self.parameters.get(
+            "parametric_direct_clip_negative",
+            not (self.exact_fallback or self.start_at_mean),
+        )
         if not isinstance(clip, (bool, np.bool_)):
             raise ValueError("parametric_direct_clip_negative must be True or False.")
         self.direct_clip_negative = bool(clip)
-        self.direct_anchor_shrink = float(self.parameters.get("parametric_direct_anchor_shrink", 0.05))
+        self.direct_anchor_shrink = float(
+            self.parameters.get(
+                "parametric_direct_anchor_shrink", 0.0 if self.start_at_mean else 0.05
+            )
+        )
         if not 0.0 <= self.direct_anchor_shrink < 1.0:
             raise ValueError("parametric_direct_anchor_shrink must be in [0, 1).")
         self.current_guard_bases = {}

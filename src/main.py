@@ -1967,6 +1967,8 @@ def main():
                         subproblem_selection_method_value = "p-median-direct-ridge-mean-anchor"
                     elif params.get('predictor_type') == 'PARAMETRIC_DIRECT_RIDGE_PMEDIAN_MEAN_EXACTFB':
                         subproblem_selection_method_value = "p-median-direct-ridge-exact-fallback"
+                    elif params.get('predictor_type') == 'PARAMETRIC_DIRECT_RIDGE_PMEDIAN_MEAN_V0':
+                        subproblem_selection_method_value = "p-median-direct-ridge-start-at-mean"
                     elif params.get('predictor_type') in PARAMETRIC_PREDICTORS:
                         subproblem_selection_method_value = "p-median"
                 else:
