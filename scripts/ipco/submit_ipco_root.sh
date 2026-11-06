@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Submit an IPCO root made by prepare_ipco_root.py, with the SAME Slurm resources,
 # Gurobi license and per-task job script as the journal's campaign 1
-# (16 CPUs, 8G per CPU, 24 h Slurm limit, account def-brostami-ab_cpu).
+# (16 CPUs, 8G per CPU, account def-brostami-ab_cpu). Wall time: TIME_LIMIT env var,
+# default 24:00:00 as in campaign 1, e.g. TIME_LIMIT=3-00:00:00.
 # Usage: bash scripts/ipco/submit_ipco_root.sh IPCO_ROOT [--dry-run|--submit]
 set -euo pipefail
 ROOT="$(realpath "${1:?Usage: submit_ipco_root.sh IPCO_ROOT [--dry-run|--submit]}")"
@@ -18,13 +19,16 @@ DATA="$(cat "$ROOT/source_data_root.txt")"
 RESULTS_ROOT="$(dirname "$(dirname "$ROOT")")"
 TIMESTAMP="${ROOT##*/MASTER_RUNS/}"
 MAX_CONCURRENT="${MAX_CONCURRENT:-8}"
+# Slurm wall time per task. Campaign 1 used 24:00:00 (Gurobi itself stops at 3 h).
+TIME_LIMIT="${TIME_LIMIT:-24:00:00}"
 echo "IPCO ROOT: $ROOT"
+echo "Slurm wall time per task: $TIME_LIMIT"
 echo "Tasks: 1-$N | gap $GAP | data $DATA | code $(cat "$ROOT/source_commit.txt")"
 echo "Results: $RESULTS_ROOT/SCFLP_class/RESULTS/labd_ipco_${TIMESTAMP}/"
 if [[ "$MODE" == "--dry-run" ]]; then echo "DRY RUN; NO JOBS SUBMITTED."; exit 0; fi
 out="$(sbatch \
   --account=def-brostami-ab_cpu \
-  --cpus-per-task=16 --mem-per-cpu=8G --time=24:00:00 \
+  --cpus-per-task=16 --mem-per-cpu=8G --time="$TIME_LIMIT" \
   --job-name=labd_ipco \
   --array="1-$N%$MAX_CONCURRENT" \
   --output="$ROOT/SLURM_LOGS/slurm-%x-%A_%a.out" \
