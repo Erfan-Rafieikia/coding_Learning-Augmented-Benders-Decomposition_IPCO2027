@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from Dual_Prediction.parametric import (  # noqa: E402
     DIRECT_RIDGE_PREDICTORS,
     PARAMETRIC_DIRECT_RIDGE_PMEDIAN_MEAN,
+    PARAMETRIC_DIRECT_RIDGE_PMEDIAN_MEAN_EXACTFB,
     PARAMETRIC_PREDICTORS,
     RHS_RIDGE_PREDICTORS,
     ParametricDualPredictor,
@@ -131,6 +132,34 @@ class DirectRidgeTests(unittest.TestCase):
         raw = pred._raw_predictions([0], None, x)
         self.assertTrue(np.all(raw[0] >= 0.0))
         self.assertGreaterEqual(pred.direct_negative_clipped, 1)
+
+
+    def _exactfb_case(self, raw_vector):
+        data = SimpleNamespace(I=[0], J=[0], cost=[[20.0]], scenarios=[[10.0], [10.0]], capacity=[20.0])
+        pred = ParametricDualPredictor(PARAMETRIC_DIRECT_RIDGE_PMEDIAN_MEAN_EXACTFB, "SCFLP", data,
+                                       parameters={"parametric_objective_guard": True})
+        pred.selected = [0]
+        pred.mapping = {1: {"representative": 0}}
+        pred.counts = {0: 1.0}
+        pred._raw_predictions = lambda ids, model, x: {sid: np.array(raw_vector, dtype=float) for sid in ids}
+        self.assertTrue(pred.prepare_iteration({0: {"mu": {0: 10.0}, "nu": {0: 0.0}}}, {0: 0.1}, [1], 1))
+        return pred
+
+    def test_exact_fallback_returns_infeasible_raw_for_exact_solve(self):
+        pred = self._exactfb_case([25.0, 1.0])          # violates mu - nu <= 20
+        self.assertTrue(pred.exact_fallback)
+        self.assertFalse(pred.direct_clip_negative)
+        self.assertEqual(pred.direct_exact_fallback_requested, 1)
+        vec = pred.codec.flatten(pred.predict([1])[1])
+        self.assertFalse(pred.codec.is_feasible(vec, 1e-7))  # callback will solve it exactly
+        self.assertEqual(pred.direct_gamma_evaluations, 0)    # no repair was attempted
+
+    def test_exact_fallback_keeps_feasible_raw_through_guard(self):
+        pred = self._exactfb_case([15.0, 0.0])          # feasible and better than the mean (10, 0)
+        self.assertEqual(pred.direct_exact_fallback_requested, 0)
+        vec = pred.codec.flatten(pred.predict([1])[1])
+        np.testing.assert_allclose(vec, [15.0, 0.0])
+        self.assertEqual(pred.objective_guard_accepted, 1)
 
 
 if __name__ == "__main__":

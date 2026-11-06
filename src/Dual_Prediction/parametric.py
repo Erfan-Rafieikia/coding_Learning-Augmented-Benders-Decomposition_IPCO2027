@@ -89,7 +89,14 @@ PARAMETRIC_RHS_RIDGE_PMEDIAN_NEAREST_ANCHOR = "PARAMETRIC_RHS_RIDGE_PMEDIAN_NEAR
 # IPCO 2027: direct dual prediction with a mean-of-exact-duals reference point.
 PARAMETRIC_DIRECT_RIDGE_PMEDIAN_MEAN = "PARAMETRIC_DIRECT_RIDGE_PMEDIAN_MEAN"
 
-DIRECT_RIDGE_PREDICTORS = frozenset({PARAMETRIC_DIRECT_RIDGE_PMEDIAN_MEAN})
+# Comparison variant (not in the IPCO paper): no repair; an infeasible raw
+# prediction is solved exactly instead (the callback's per-subproblem fallback).
+PARAMETRIC_DIRECT_RIDGE_PMEDIAN_MEAN_EXACTFB = "PARAMETRIC_DIRECT_RIDGE_PMEDIAN_MEAN_EXACTFB"
+EXACT_FALLBACK_PREDICTORS = frozenset({PARAMETRIC_DIRECT_RIDGE_PMEDIAN_MEAN_EXACTFB})
+
+DIRECT_RIDGE_PREDICTORS = frozenset(
+    {PARAMETRIC_DIRECT_RIDGE_PMEDIAN_MEAN, *EXACT_FALLBACK_PREDICTORS}
+)
 
 RHS_RIDGE_PREDICTORS = frozenset(
     {
@@ -951,8 +958,11 @@ class ParametricDualPredictor:
         self.rhs_reducer = None
         self.all_transfer_mapping = {}
         self.is_direct = self.variant in DIRECT_RIDGE_PREDICTORS
-        # IPCO repair settings (used only by the direct predictors).
-        clip = self.parameters.get("parametric_direct_clip_negative", True)
+        self.exact_fallback = self.variant in EXACT_FALLBACK_PREDICTORS
+        self.direct_exact_fallback_requested = 0
+        # IPCO repair settings (used only by the direct predictors). The
+        # exact-fallback variant applies no closed-form fix at all by default.
+        clip = self.parameters.get("parametric_direct_clip_negative", not self.exact_fallback)
         if not isinstance(clip, (bool, np.bool_)):
             raise ValueError("parametric_direct_clip_negative must be True or False.")
         self.direct_clip_negative = bool(clip)
@@ -1602,10 +1612,17 @@ class ParametricDualPredictor:
         self.raw_infeasible += sum(not value for value in raw_feasible.values())
 
         zero_repair_ids = set()
+        fallback_ids = set()
+        if self.exact_fallback:
+            # No repair: infeasible raw predictions are returned unchanged so the
+            # callback's certification rejects them and solves those subproblems
+            # exactly. Feasible raw predictions still go through the guard.
+            fallback_ids = {sid for sid, ok in raw_feasible.items() if not ok}
+            self.direct_exact_fallback_requested += len(fallback_ids)
         needs_repair = (
             self.variant == PARAMETRIC_RIDGE_REPAIR
             or self.variant in RHS_RIDGE_PREDICTORS
-        )
+        ) and not self.exact_fallback
         if needs_repair:
             repair_start = time.perf_counter()
             tolerance = float(self.parameters.get("parametric_feasibility_tolerance", 1e-7))
@@ -1696,7 +1713,7 @@ class ParametricDualPredictor:
             self.repair_time_total += time.perf_counter() - repair_start
             predictions = repaired
         else:
-            predictions = raw
+            predictions = {sid: v for sid, v in raw.items() if sid not in fallback_ids}
 
         certification_start = time.perf_counter()
         for sid, vector in list(predictions.items()):
@@ -1824,6 +1841,9 @@ class ParametricDualPredictor:
         self.current_predictions = {
             sid: self.codec.unflatten(vector) for sid, vector in predictions.items()
         }
+        for sid in fallback_ids:
+            # Deliberately uncertified: the callback solves these exactly.
+            self.current_predictions[sid] = self.codec.unflatten(raw[sid])
 
         # Report the two manuscript training-error quantities for every fitted
         # model.  These are diagnostics, not additional constraints.
@@ -1912,6 +1932,7 @@ class ParametricDualPredictor:
             "direct_negative_clipped": self.direct_negative_clipped,
             "direct_gamma_evaluations": self.direct_gamma_evaluations,
             "direct_gamma_positive": self.direct_gamma_positive,
+            "direct_exact_fallback_requested": self.direct_exact_fallback_requested,
             "repair_mode": self.repair_mode,
             "structure_repair_attempts": self.structure_repair_attempts,
             "structure_repair_feasible_candidates": self.structure_repair_feasible_candidates,
