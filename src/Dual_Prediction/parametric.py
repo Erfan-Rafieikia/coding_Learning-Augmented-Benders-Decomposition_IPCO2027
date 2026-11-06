@@ -951,6 +951,18 @@ class ParametricDualPredictor:
         self.rhs_reducer = None
         self.all_transfer_mapping = {}
         self.is_direct = self.variant in DIRECT_RIDGE_PREDICTORS
+        # IPCO repair settings (used only by the direct predictors).
+        clip = self.parameters.get("parametric_direct_clip_negative", True)
+        if not isinstance(clip, (bool, np.bool_)):
+            raise ValueError("parametric_direct_clip_negative must be True or False.")
+        self.direct_clip_negative = bool(clip)
+        self.direct_anchor_shrink = float(self.parameters.get("parametric_direct_anchor_shrink", 0.05))
+        if not 0.0 <= self.direct_anchor_shrink < 1.0:
+            raise ValueError("parametric_direct_anchor_shrink must be in [0, 1).")
+        self.current_guard_bases = {}
+        self.direct_negative_clipped = 0
+        self.direct_gamma_positive = 0
+        self.direct_gamma_evaluations = 0
         self.anchor_method = (
             "MEAN_EXACT"
             if self.is_direct
@@ -1450,9 +1462,16 @@ class ParametricDualPredictor:
                 design = np.concatenate([self._feature(sid), rhs_feature])
                 if self.is_direct:
                     # Linear map with no intercept: lambda = Theta [z_m; s_m(x)].
-                    predictions[sid] = self.codec.canonicalize(
-                        self.warmup_coefficient @ design
-                    )
+                    vector = self.warmup_coefficient @ design
+                    if self.direct_clip_negative and self.codec.problem_type == "SCFLP":
+                        # Projection onto lambda >= 0 (closed form). For SCFLP every
+                        # dual coordinate is sign-constrained, and with c >= 0 raising a
+                        # negative mu_i to 0 or a negative nu_j to 0 cannot create a new
+                        # violation of mu_i - nu_j <= c_ij; it only removes sign violations.
+                        if np.any(vector < 0.0):
+                            self.direct_negative_clipped += 1
+                            vector = np.maximum(vector, 0.0)
+                    predictions[sid] = self.codec.canonicalize(vector)
                     continue
                 base = self.current_bases.get(int(sid), self.current_base)
                 if base is None:
@@ -1508,7 +1527,14 @@ class ParametricDualPredictor:
                 if self.anchor_method == "MEAN_EXACT":
                     # One common reference point for all scenarios; compute once.
                     mean_anchor = self._mean_exact_anchor(solved_duals)
-                    self.current_bases = {sid: mean_anchor for sid in anchor_ids}
+                    # The repair starts from (1 - eps) * mean, which is feasible because
+                    # 0 is in D (q >= 0) and D is convex, and lies off the faces on which
+                    # the mean sits. The objective guard still compares with the mean.
+                    start = self.codec.canonicalize((1.0 - self.direct_anchor_shrink) * mean_anchor)
+                    if not self.codec.is_feasible(start, ANCHOR_FEASIBILITY_TOLERANCE):
+                        start = mean_anchor
+                    self.current_bases = {sid: start for sid in anchor_ids}
+                    self.current_guard_bases = {sid: mean_anchor for sid in anchor_ids}
                 else:
                     self.current_bases = {
                         sid: self._feasible_anchor(solved_duals, sid)
@@ -1655,6 +1681,10 @@ class ParametricDualPredictor:
                 else:
                     for sid, (vector, gamma, was_feasible, reverted) in local_results.items():
                         repaired[sid] = vector
+                        if self.is_direct:
+                            self.direct_gamma_evaluations += 1
+                            if gamma > 0.0:
+                                self.direct_gamma_positive += 1
                         self.gamma_values.append(gamma)
                         self._record_diagnostic_gamma(gamma)
                         if self.objective_guard_enabled and self.guard_gamma_zero_fastpath and gamma == 0.0:
@@ -1675,7 +1705,13 @@ class ParametricDualPredictor:
             ):
                 self.certification_failures += 1
                 if needs_repair or self.variant == PARAMETRIC_PENALIZED_ERRORS:
-                    predictions[sid] = self.current_bases.get(int(sid), base).copy()
+                    fallback = (
+                        self.current_guard_bases.get(int(sid))
+                        if self.is_direct else None
+                    )
+                    if fallback is None:
+                        fallback = self.current_bases.get(int(sid), base)
+                    predictions[sid] = fallback.copy()
                 else:
                     self.feasibility_time_total += time.perf_counter() - certification_start
                     return False
@@ -1691,7 +1727,11 @@ class ParametricDualPredictor:
                 tolerance = float(self.parameters.get("parametric_feasibility_tolerance", 1e-7))
                 probe_start = time.perf_counter()
                 for sid, vector in list(predictions.items()):
-                    scenario_base = self.current_bases.get(int(sid), self.current_base)
+                    scenario_base = (
+                        self.current_guard_bases.get(int(sid))
+                        if self.is_direct
+                        else self.current_bases.get(int(sid), self.current_base)
+                    )
                     # If exact line-segment repair produced gamma=0, its certified
                     # result is the anchor itself. A numerical equality check
                     # protects against canonicalization or fallback edge cases.
@@ -1699,6 +1739,7 @@ class ParametricDualPredictor:
                     # comparison behavior verbatim.
                     skip = (
                         self.objective_guard_enabled
+                        and not self.is_direct
                         and self.guard_gamma_zero_fastpath
                         and int(sid) in zero_repair_ids
                         and scenario_base is not None
@@ -1710,6 +1751,7 @@ class ParametricDualPredictor:
                     # the old line-segment path and distinguish this case in logs.
                     skip_equal_anchor = (
                         self.objective_guard_enabled
+                        and not self.is_direct
                         and self.guard_gamma_zero_fastpath
                         and self.repair_mode == "STRUCTURE_AWARE"
                         and not skip
@@ -1865,6 +1907,11 @@ class ParametricDualPredictor:
         return {
             "variant": self.variant,
             "anchor_method": self.anchor_method,
+            "direct_clip_negative": self.direct_clip_negative,
+            "direct_anchor_shrink": self.direct_anchor_shrink,
+            "direct_negative_clipped": self.direct_negative_clipped,
+            "direct_gamma_evaluations": self.direct_gamma_evaluations,
+            "direct_gamma_positive": self.direct_gamma_positive,
             "repair_mode": self.repair_mode,
             "structure_repair_attempts": self.structure_repair_attempts,
             "structure_repair_feasible_candidates": self.structure_repair_feasible_candidates,

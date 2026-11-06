@@ -17,7 +17,7 @@ import pandas as pd
 
 KEEP = re.compile(r"(raw_infeasible|raw_predictions|repaired_predictions|full_reversions|"
                   r"certification_failures|objective_guard_(checks|accepted|rejected|skipped)|"
-                  r"gamma_(mean|median|min|max)|prediction_opportunities|training_failures)", re.I)
+                  r"gamma_(mean|median|min|max)|repair_gamma|direct_|prediction_opportunities|training_failures)", re.I)
 
 
 def main() -> int:

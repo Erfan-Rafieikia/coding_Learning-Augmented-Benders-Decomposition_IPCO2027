@@ -88,12 +88,49 @@ class DirectRidgeTests(unittest.TestCase):
         self.assertTrue(pred.prepare_iteration(exact, x, predicted, iteration=5))
         mean = np.mean([pred.codec.flatten(exact[s]) for s in pred.selected], axis=0)
         for sid in predicted:
-            np.testing.assert_allclose(pred.current_bases[sid], mean)
+            # Repair starts from (1 - eps) * mean; the guard compares with the mean.
+            np.testing.assert_allclose(pred.current_guard_bases[sid], mean)
+            np.testing.assert_allclose(pred.current_bases[sid], (1 - pred.direct_anchor_shrink) * mean)
             vec = pred.codec.flatten(pred.predict([sid])[sid])
             self.assertTrue(pred.codec.is_feasible(vec, 1e-7))
             g = pred.codec.objective_coefficients(sid, x)
             # Objective guard: never weaker than the mean anchor at the current x.
             self.assertGreaterEqual(float(g @ vec), float(g @ mean) - 1e-9)
+
+
+    def _face_case(self, shrink):
+        data = SimpleNamespace(I=[0], J=[0], cost=[[20.0]], scenarios=[[10.0], [10.0]], capacity=[20.0])
+        pred = ParametricDualPredictor(PARAMETRIC_DIRECT_RIDGE_PMEDIAN_MEAN, "SCFLP", data,
+                                       parameters={"parametric_objective_guard": True,
+                                                   "parametric_direct_anchor_shrink": shrink})
+        pred.selected = [0]
+        pred.mapping = {1: {"representative": 0}}
+        pred.counts = {0: 1.0}
+        # Raw prediction mu=25, nu=1: violates mu - nu <= 20. The mean (20, 0) is on that face.
+        pred._raw_predictions = lambda ids, model, x: {sid: np.array([25.0, 1.0]) for sid in ids}
+        self.assertTrue(pred.prepare_iteration({0: {"mu": {0: 20.0}, "nu": {0: 0.0}}}, {0: 0.1}, [1], 1))
+        return pred
+
+    def test_repair_step_is_zero_from_a_face_and_positive_from_inside(self):
+        on_face = self._face_case(0.0)
+        self.assertEqual(on_face.direct_gamma_positive, 0)
+        inside = self._face_case(0.05)
+        self.assertEqual(inside.direct_gamma_positive, 1)
+        vec = inside.codec.flatten(inside.predict([1])[1])
+        self.assertTrue(inside.codec.is_feasible(vec, 1e-7))
+        g = inside.codec.objective_coefficients(1, {0: 0.1})
+        self.assertGreaterEqual(float(g @ vec), float(g @ np.array([20.0, 0.0])) - 1e-9)
+
+    def test_negative_raw_entries_are_clipped(self):
+        pred = self._trained()
+        x = {0: 0.4, 1: 0.6}
+        design = np.concatenate([pred._feature(0),
+                                 pred.rhs_reducer.transform(pred.codec.objective_coefficients(0, x))])
+        # Coefficients that map this design to -1 in every coordinate.
+        pred.warmup_coefficient = -np.outer(np.ones(pred.codec.dimension), design) / float(design @ design)
+        raw = pred._raw_predictions([0], None, x)
+        self.assertTrue(np.all(raw[0] >= 0.0))
+        self.assertGreaterEqual(pred.direct_negative_clipped, 1)
 
 
 if __name__ == "__main__":
