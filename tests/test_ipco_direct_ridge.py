@@ -13,6 +13,8 @@ from Dual_Prediction.parametric import (  # noqa: E402
     PARAMETRIC_DIRECT_RIDGE_RANDOM_MEAN,
     PARAMETRIC_DIRECT_RIDGE_PMEDIAN_MEAN_EXACTFB,
     PARAMETRIC_DIRECT_RIDGE_RANDOM_MEAN_EXACTFB,
+    PARAMETRIC_DIRECT_RIDGE_PMEDIAN_MEAN_V0,
+    PARAMETRIC_DIRECT_RIDGE_RANDOM_MEAN_V0,
     PARAMETRIC_PREDICTORS,
     RHS_RIDGE_PREDICTORS,
     ParametricDualPredictor,
@@ -181,6 +183,20 @@ class DirectRidgeTests(unittest.TestCase):
         self.assertEqual(list(a.select(self.features, 3)[0]), list(b.select(self.features, 3)[0]))
         self.assertTrue(a.exact_fallback)
         self.assertFalse(b.exact_fallback)
+
+    def test_start_at_mean_variant_settings(self):
+        v0 = ParametricDualPredictor(PARAMETRIC_DIRECT_RIDGE_PMEDIAN_MEAN_V0, "SCFLP", self.data, parameters=self.params)
+        v1 = ParametricDualPredictor(PARAMETRIC_DIRECT_RIDGE_PMEDIAN_MEAN, "SCFLP", self.data, parameters=self.params)
+        self.assertEqual((v0.direct_anchor_shrink, v0.direct_clip_negative, v0.exact_fallback), (0.0, False, False))
+        self.assertEqual((v1.direct_anchor_shrink, v1.direct_clip_negative), (0.05, True))
+
+
+    def test_random_start_at_mean_variant(self):
+        params = dict(self.params, parametric_random_selection_seed=7)
+        a = ParametricDualPredictor(PARAMETRIC_DIRECT_RIDGE_RANDOM_MEAN_V0, "SCFLP", self.data, parameters=params)
+        b = ParametricDualPredictor(PARAMETRIC_DIRECT_RIDGE_RANDOM_MEAN, "SCFLP", self.data, parameters=params)
+        self.assertEqual(list(a.select(self.features, 3)[0]), list(b.select(self.features, 3)[0]))
+        self.assertEqual((a.direct_anchor_shrink, a.direct_clip_negative), (0.0, False))
 
 
 if __name__ == "__main__":
