@@ -12,6 +12,7 @@ The code that runs is a snapshot (git archive) of this repository's HEAD, stored
 ROOT/source, with its commit in ROOT/source_commit.txt.
 
 Example (Nibi):
+  # add --include-baselines to also run Standard BD and RND with unchanged configs
   python scripts/ipco/prepare_ipco_root.py \
       --template-root /scratch/rafieiki/Benders_Integration_with_ML/RESULTS/MASTER_RUNS/labd_convergence_full_0p1pct_20261102_141136 \
       --results-root /scratch/rafieiki/LABD_IPCO2027/RESULTS --label smoke \
@@ -64,6 +65,11 @@ def main() -> int:
     p.add_argument("--scenarios", type=int, default=500)
     p.add_argument("--ratios", nargs="+", type=float, default=[0.05, 0.15, 0.25])
     p.add_argument("--repair", default="LOCAL")
+    p.add_argument("--include-baselines", action="store_true",
+                   help="also copy the campaign-1 STANDARD_BD task and the RANDOM (RND) tasks at the "
+                        "chosen ratios for each instance, with their configs UNCHANGED")
+    p.add_argument("--baselines-only", action="store_true",
+                   help="copy only the STANDARD_BD and RANDOM tasks (no IPCO predictor tasks)")
     args = p.parse_args()
 
     template = args.template_root.expanduser().resolve()
@@ -71,17 +77,30 @@ def main() -> int:
     with (template / "full_manifest.tsv").open(encoding="utf-8", newline="") as f:
         manifest = list(csv.DictReader(f, delimiter="\t"))
 
-    chosen = []
+    def one(rows, what):
+        if len(rows) != 1:
+            raise SystemExit(f"Expected one template task for {what}, found {len(rows)}")
+        return rows[0]
+
+    chosen = []          # (template row, kind) with kind in {"ipco", "baseline"}
     for inst in args.instances:
         label = f"{inst}_S{args.scenarios}"
+        scflp = [r for r in manifest if r.get("problem") == "SCFLP" and r.get("instance_label") == label]
+        if args.include_baselines or args.baselines_only:
+            chosen.append((one([r for r in scflp if r.get("method") == "STANDARD_BD"],
+                               f"{label} STANDARD_BD"), "baseline"))
+            for ratio in args.ratios:
+                chosen.append((one([r for r in scflp if r.get("method") == "RANDOM"
+                                    and ratio_matches(r.get("selected_ratio", ""), ratio)],
+                                   f"{label} RANDOM ratio {ratio}"), "baseline"))
+        if args.baselines_only:
+            continue
         for ratio in args.ratios:
             rows = [r for r in manifest
                     if r.get("problem") == "SCFLP" and r.get("instance_label") == label
                     and r.get("method") == TEMPLATE_METHOD and r.get("repair", "") == args.repair
                     and ratio_matches(r.get("selected_ratio", ""), ratio)]
-            if len(rows) != 1:
-                raise SystemExit(f"Expected one template task for {label} ratio {ratio}, found {len(rows)}")
-            chosen.append(rows[0])
+            chosen.append((one(rows, f"{label} {TEMPLATE_METHOD} ratio {ratio}"), "ipco"))
 
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     tag = "pmedian" if args.method.endswith("PMEDIAN_MEAN") else "random"
@@ -107,9 +126,20 @@ def main() -> int:
 
     out_rows = []
     with (root / "task_list.txt").open("w", encoding="utf-8") as task_list:
-        for new_id, row in enumerate(chosen, start=1):
+        for new_id, (row, kind) in enumerate(chosen, start=1):
             src = template / f"configs/task_{int(row['task_id']):04d}.py"
             text = src.read_text(encoding="utf-8")
+            rel = f"configs/task_{new_id:04d}.py"
+            if kind == "baseline":
+                # Baselines are copied byte for byte.
+                (root / rel).write_text(text, encoding="utf-8")
+                task_list.write(f"{rel}|SCFLP\n")
+                print(f"  {src.name} -> {row['method']} (unchanged copy)")
+                out_rows.append({"task_id": new_id, "template_task_id": row["task_id"],
+                                 "instance_label": row["instance_label"], "method": row["method"],
+                                 "selected_ratio": row.get("selected_ratio", ""), "repair": row.get("repair", ""),
+                                 "template_config": str(src)})
+                continue
             old = assignments(text)
             if old.get(PREDICTOR_KEY) != [TEMPLATE_METHOD]:
                 raise SystemExit(f"{src}: unexpected {PREDICTOR_KEY} = {old.get(PREDICTOR_KEY)}")
@@ -123,7 +153,6 @@ def main() -> int:
                 raise SystemExit(f"{src}: unexpected changes {changed}")
             shown = {k: v for k, v in new.items() if re.search(r"guard|repair|ratio|gap|time_limit", k, re.I)}
             print(f"  {src.name} -> {args.method}: {shown}")
-            rel = f"configs/task_{new_id:04d}.py"
             (root / rel).write_text(new_text, encoding="utf-8")
             task_list.write(f"{rel}|SCFLP\n")
             out_rows.append({"task_id": new_id, "template_task_id": row["task_id"],
@@ -142,7 +171,7 @@ def main() -> int:
     print("Code commit:", commit)
     print("Gap:", (root / "target_gap.txt").read_text().strip(), "| Data:", (root / "source_data_root.txt").read_text().strip())
     for r in out_rows:
-        print(f"  task {r['task_id']}: {r['instance_label']} ratio {r['selected_ratio']} (from campaign-1 task {r['template_task_id']})")
+        print(f"  task {r['task_id']}: {r['instance_label']} {r['method']} ratio {r['selected_ratio'] or '-'} (from campaign-1 task {r['template_task_id']})")
     return 0
 
 
