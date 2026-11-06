@@ -16,7 +16,7 @@ import sys
 import pandas as pd
 
 KEEP = re.compile(r"(raw_infeasible|raw_predictions|repaired_predictions|full_reversions|"
-                  r"certification_failures|objective_guard_(checks|accepted|rejected)|"
+                  r"certification_failures|objective_guard_(checks|accepted|rejected|skipped)|"
                   r"gamma_(mean|median|min|max)|prediction_opportunities|training_failures)", re.I)
 
 
@@ -42,13 +42,16 @@ def main() -> int:
                 states[m.group(1)] = (st.split()[0], el)
     rows = []
     for _, t in man.iterrows():
-        rec = {"task": t.task_id, "instance": t.instance_label, "ratio": t.selected_ratio,
+        rec = {"task": t.task_id, "instance": t.instance_label, "method": str(t.method).replace("PARAMETRIC_DIRECT_RIDGE_PMEDIAN_MEAN", "IPCO_PMEDIAN").replace("PARAMETRIC_DIRECT_RIDGE_RANDOM_MEAN", "IPCO_RANDOM"), "ratio": t.selected_ratio,
                "slurm": states.get(t.task_id, ("UNKNOWN", ""))[0],
                "elapsed": states.get(t.task_id, ("", ""))[1]}
         dirs = sorted(glob.glob(os.path.join(results, f"task_{t.task_id}_*")), key=os.path.getmtime)
         x = os.path.join(dirs[-1], "solution_log.xlsx") if dirs else ""
-        if x and os.path.exists(x):
-            r = pd.read_excel(x).iloc[0]
+        d = pd.read_excel(x) if x and os.path.exists(x) else None
+        if d is not None and len(d) == 0:
+            rec["stop"] = "EMPTY_LOG (task running or failed)"
+        elif d is not None:
+            r = d.iloc[0]
             rec.update(stop=r.get("stopping_reason"), time_s=r.get("solution_time_sec"),
                        obj=r.get("original_Prob_Obj_Value"))
             for col in r.index:
@@ -62,6 +65,7 @@ def main() -> int:
     pd.set_option("display.max_columns", 60)
     print(df.to_string(index=False))
     if a.csv:
+        os.makedirs(os.path.dirname(os.path.abspath(a.csv)), exist_ok=True)
         df.to_csv(a.csv, index=False)
         print("written", a.csv)
     return 0
