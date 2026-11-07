@@ -21,7 +21,6 @@ for ax,(col,lab) in zip(axs,[('Delta',r'$\Delta_a$ (%)'),('tau',r'$\tau_a$')]):
     for sp in ['top','right']: ax.spines[sp].set_visible(False)
     ax.tick_params(width=0.4,length=2,pad=1.5); ax.grid(axis='y',lw=0.3,color='#e5e5e2'); ax.set_axisbelow(True)
 axs[1].axhline(1,color='#8a8a85',lw=0.6,ls=(0,(3,2)),zorder=1)
-axs[1].text(-0.55,0.93,'Standard BD',fontsize=5.5,color='#6b6b66',ha='left',va='top')
 axs[0].set_ylim(-0.08,1.7)
 h=[Line2D([],[],color=C[m],marker=MK[m],lw=0.9,ms=3,label=m) for m in ['LABD','RND']]
 fig.legend(handles=h,loc='lower center',ncol=2,frameon=False,bbox_to_anchor=(0.5,-0.02),handlelength=1.6,columnspacing=1.5)
