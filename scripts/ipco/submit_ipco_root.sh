@@ -16,6 +16,7 @@ PROJECT_ROOT="$ROOT/source"
 N="$(wc -l < "$ROOT/task_list.txt")"
 GAP="$(cat "$ROOT/target_gap.txt")"
 DATA="$(cat "$ROOT/source_data_root.txt")"
+PROBLEM="$(cat "$ROOT/problem.txt" 2>/dev/null || echo SCFLP)"   # roots made before 2026-11-07 are SCFLP
 RESULTS_ROOT="$(dirname "$(dirname "$ROOT")")"
 TIMESTAMP="${ROOT##*/MASTER_RUNS/}"
 MAX_CONCURRENT="${MAX_CONCURRENT:-8}"
@@ -24,7 +25,8 @@ TIME_LIMIT="${TIME_LIMIT:-24:00:00}"
 echo "IPCO ROOT: $ROOT"
 echo "Slurm wall time per task: $TIME_LIMIT"
 echo "Tasks: 1-$N | gap $GAP | data $DATA | code $(cat "$ROOT/source_commit.txt")"
-echo "Results: $RESULTS_ROOT/SCFLP_class/RESULTS/labd_ipco_${TIMESTAMP}/"
+echo "Problem: $PROBLEM | concurrent tasks: $MAX_CONCURRENT"
+echo "Results: $RESULTS_ROOT/${PROBLEM}_class/RESULTS/labd_ipco_${TIMESTAMP}/"
 if [[ "$MODE" == "--dry-run" ]]; then echo "DRY RUN; NO JOBS SUBMITTED."; exit 0; fi
 out="$(sbatch \
   --account=def-brostami-ab_cpu \
@@ -33,7 +35,7 @@ out="$(sbatch \
   --array="1-$N%$MAX_CONCURRENT" \
   --output="$ROOT/SLURM_LOGS/slurm-%x-%A_%a.out" \
   --error="$ROOT/SLURM_LOGS/slurm-%x-%A_%a.err" \
-  --export="ALL,PROJECT_ROOT=$PROJECT_ROOT,CONFIG_ROOT=$ROOT,RESULTS_ROOT_OVERRIDE=$RESULTS_ROOT,LABD_DATA_ROOT=$DATA,UNIQUE_ID=labd_ipco,TIMESTAMP=$TIMESTAMP,PROBLEM_CLASSES=SCFLP,LABD_MIP_GAP_TARGET=$GAP,LABD_FROZEN_PILOT=1" \
+  --export="ALL,PROJECT_ROOT=$PROJECT_ROOT,CONFIG_ROOT=$ROOT,RESULTS_ROOT_OVERRIDE=$RESULTS_ROOT,LABD_DATA_ROOT=$DATA,UNIQUE_ID=labd_ipco,TIMESTAMP=$TIMESTAMP,PROBLEM_CLASSES=$PROBLEM,LABD_MIP_GAP_TARGET=$GAP,LABD_FROZEN_PILOT=1" \
   "$PROJECT_ROOT/my_job.pmedian_nearest.alliance.sbatch")"
 JOB_ID="${out##* }"
 [[ "$JOB_ID" =~ ^[0-9]+$ ]] || { echo "Ambiguous sbatch response: $out" >&2; exit 1; }

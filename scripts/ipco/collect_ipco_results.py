@@ -4,7 +4,7 @@ for man in sorted(glob.glob(f'{base}/MASTER_RUNS/ipco_*/manifest.tsv')):
     root=os.path.dirname(man); stamp=os.path.basename(root)
     m=pd.read_csv(man,sep='\t',dtype=str)
     for _,t in m.iterrows():
-        ds=sorted(glob.glob(f'{base}/SCFLP_class/RESULTS/labd_ipco_{stamp}/task_{t.task_id}_*/solution_log.xlsx'))
+        ds=sorted(glob.glob(f'{base}/*_class/RESULTS/labd_ipco_{stamp}/task_{t.task_id}_*/solution_log.xlsx'))
         rec=dict(root=stamp,task=int(t.task_id),instance=t.instance_label,method=t.method,ratio=t.selected_ratio,n_logs=len(ds))
         if ds:
             d=pd.read_excel(ds[-1])

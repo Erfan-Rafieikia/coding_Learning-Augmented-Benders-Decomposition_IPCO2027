@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Prepare an IPCO 2027 run root from the journal's campaign-1 root. Never submits.
 
-For each chosen SCFLP instance at 500 scenarios and each exact share, this copies the
+For each chosen instance (SCFLP by default, or SCMND with --problem SCMND) and scenario count and each exact share, this copies the
 campaign-1 task config of PARAMETRIC_RHS_RIDGE_PMEDIAN_NEAREST_ANCHOR with LOCAL repair
 and changes exactly ONE thing: the predictor name in predictor_ML_Augmented_BD_grid
 becomes the IPCO predictor. Everything else (data path, gap, time limit, guard,
@@ -63,6 +63,7 @@ def main() -> int:
     p.add_argument("--results-root", type=Path, required=True)
     p.add_argument("--label", default="smoke", help="smoke or full (part of the root name)")
     p.add_argument("--method", default=IPCO_METHODS[0], choices=IPCO_METHODS)
+    p.add_argument("--problem", default="SCFLP", choices=("SCFLP", "SCMND"))
     p.add_argument("--instances", nargs="+", default=["p4"])
     p.add_argument("--scenarios", type=int, default=500)
     p.add_argument("--ratios", nargs="+", type=float, default=[0.05, 0.15, 0.25])
@@ -87,7 +88,7 @@ def main() -> int:
     chosen = []          # (template row, kind) with kind in {"ipco", "baseline"}
     for inst in args.instances:
         label = f"{inst}_S{args.scenarios}"
-        scflp = [r for r in manifest if r.get("problem") == "SCFLP" and r.get("instance_label") == label]
+        scflp = [r for r in manifest if r.get("problem") == args.problem and r.get("instance_label") == label]
         if args.include_baselines or args.baselines_only:
             chosen.append((one([r for r in scflp if r.get("method") == "STANDARD_BD"],
                                f"{label} STANDARD_BD"), "baseline"))
@@ -99,13 +100,13 @@ def main() -> int:
             continue
         for ratio in args.ratios:
             rows = [r for r in manifest
-                    if r.get("problem") == "SCFLP" and r.get("instance_label") == label
+                    if r.get("problem") == args.problem and r.get("instance_label") == label
                     and r.get("method") == TEMPLATE_METHOD and r.get("repair", "") == args.repair
                     and ratio_matches(r.get("selected_ratio", ""), ratio)]
             chosen.append((one(rows, f"{label} {TEMPLATE_METHOD} ratio {ratio}"), "ipco"))
 
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    tag = ("pmedian" if "PMEDIAN" in args.method else "random") + ("_exactfb" if args.method.endswith("_EXACTFB") else "") + ("_v0" if args.method.endswith("_V0") else "")
+    tag = ("scmnd_" if args.problem == "SCMND" else "") + ("pmedian" if "PMEDIAN" in args.method else "random") + ("_exactfb" if args.method.endswith("_EXACTFB") else "") + ("_v0" if args.method.endswith("_V0") else "")
     root = args.results_root.expanduser().resolve() / "MASTER_RUNS" / f"ipco_{args.label}_{tag}_{stamp}"
     (root / "configs").mkdir(parents=True, exist_ok=False)
     (root / "SLURM_LOGS").mkdir()
@@ -135,7 +136,7 @@ def main() -> int:
             if kind == "baseline":
                 # Baselines are copied byte for byte.
                 (root / rel).write_text(text, encoding="utf-8")
-                task_list.write(f"{rel}|SCFLP\n")
+                task_list.write(f"{rel}|{args.problem}\n")
                 print(f"  {src.name} -> {row['method']} (unchanged copy)")
                 out_rows.append({"task_id": new_id, "template_task_id": row["task_id"],
                                  "instance_label": row["instance_label"], "method": row["method"],
@@ -156,7 +157,7 @@ def main() -> int:
             shown = {k: v for k, v in new.items() if re.search(r"guard|repair|ratio|gap|time_limit", k, re.I)}
             print(f"  {src.name} -> {args.method}: {shown}")
             (root / rel).write_text(new_text, encoding="utf-8")
-            task_list.write(f"{rel}|SCFLP\n")
+            task_list.write(f"{rel}|{args.problem}\n")
             out_rows.append({"task_id": new_id, "template_task_id": row["task_id"],
                              "instance_label": row["instance_label"], "method": args.method,
                              "selected_ratio": row["selected_ratio"], "repair": row.get("repair", ""),
@@ -167,6 +168,7 @@ def main() -> int:
         w.writeheader()
         w.writerows(out_rows)
     (root / "template_root.txt").write_text(str(template) + "\n")
+    (root / "problem.txt").write_text(args.problem + "\n")
 
     print("PREPARED (NO JOBS SUBMITTED)")
     print("IPCO_ROOT=" + str(root))

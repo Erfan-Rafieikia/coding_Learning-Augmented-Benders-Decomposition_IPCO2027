@@ -27,7 +27,9 @@ def main() -> int:
     a = p.parse_args()
     root = os.path.realpath(a.root)
     stamp = root.split("/MASTER_RUNS/")[1]
-    results = os.path.join(os.path.dirname(os.path.dirname(root)), "SCFLP_class", "RESULTS", f"labd_ipco_{stamp}")
+    pf = os.path.join(root, "problem.txt")
+    problem = open(pf).read().strip() if os.path.exists(pf) else "SCFLP"
+    results = os.path.join(os.path.dirname(os.path.dirname(root)), f"{problem}_class", "RESULTS", f"labd_ipco_{stamp}")
     man = pd.read_csv(os.path.join(root, "manifest.tsv"), sep="\t", dtype=str)
     states = {}
     jf = os.path.join(root, "job_id.txt")
