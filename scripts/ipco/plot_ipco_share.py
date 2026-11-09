@@ -1,7 +1,7 @@
 import pandas as pd, numpy as np, matplotlib
 matplotlib.use('Agg'); import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
-r=pd.read_pickle('/tmp/ipco_work/metrics.pkl'); r=r[r.solved]
+r=pd.read_pickle('/tmp/ipco_work/metrics_all.pkl'); r=r[r.solved]
 plt.rcParams.update({'font.size':7,'font.family':'serif','axes.linewidth':0.5,'pdf.fonttype':42,'mathtext.fontset':'cm'})
 C={'LABD':'#2a78d6','RND':'#eb6834'}; MK={'LABD':'o','RND':'s'}
 fig,axs=plt.subplots(1,2,figsize=(4.8,1.5))
