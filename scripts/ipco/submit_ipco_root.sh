@@ -12,7 +12,15 @@ MODE="${2:---dry-run}"
 PROJECT_ROOT="$ROOT/source"
 [[ -f "$PROJECT_ROOT/my_job.pmedian_nearest.alliance.sbatch" ]] || { echo "Missing job script in source" >&2; exit 1; }
 [[ -r "$HOME/gurobi.lic" ]] || { echo "Missing personal Gurobi license" >&2; exit 1; }
-[[ ! -e "$ROOT/job_id.txt" ]] || { echo "Already submitted: $(cat "$ROOT/job_id.txt")" >&2; exit 1; }
+# RETRY_TASKS="3,8,16-28" resubmits only those tasks of an already submitted root (same frozen source and
+# configs); the new job ID is appended to retry_job_ids.txt and the summary picks the newest task folder.
+RETRY_TASKS="${RETRY_TASKS:-}"
+if [[ -z "$RETRY_TASKS" ]]; then
+  [[ ! -e "$ROOT/job_id.txt" ]] || { echo "Already submitted: $(cat "$ROOT/job_id.txt")" >&2; exit 1; }
+else
+  [[ -e "$ROOT/job_id.txt" ]] || { echo "RETRY_TASKS needs a submitted root" >&2; exit 1; }
+  [[ "$RETRY_TASKS" =~ ^[0-9,-]+$ ]] || { echo "RETRY_TASKS must look like 3,8,16-28" >&2; exit 1; }
+fi
 N="$(wc -l < "$ROOT/task_list.txt")"
 GAP="$(cat "$ROOT/target_gap.txt")"
 DATA="$(cat "$ROOT/source_data_root.txt")"
@@ -24,7 +32,7 @@ MAX_CONCURRENT="${MAX_CONCURRENT:-8}"
 TIME_LIMIT="${TIME_LIMIT:-24:00:00}"
 echo "IPCO ROOT: $ROOT"
 echo "Slurm wall time per task: $TIME_LIMIT"
-echo "Tasks: 1-$N | gap $GAP | data $DATA | code $(cat "$ROOT/source_commit.txt")"
+echo "Tasks: ${RETRY_TASKS:-1-$N} | gap $GAP | data $DATA | code $(cat "$ROOT/source_commit.txt")"
 echo "Problem: $PROBLEM | concurrent tasks: $MAX_CONCURRENT"
 echo "Results: $RESULTS_ROOT/${PROBLEM}_class/RESULTS/labd_ipco_${TIMESTAMP}/"
 if [[ "$MODE" == "--dry-run" ]]; then echo "DRY RUN; NO JOBS SUBMITTED."; exit 0; fi
@@ -32,12 +40,12 @@ out="$(sbatch \
   --account=def-brostami-ab_cpu \
   --cpus-per-task=16 --mem-per-cpu=8G --time="$TIME_LIMIT" \
   --job-name=labd_ipco \
-  --array="1-$N%$MAX_CONCURRENT" \
+  --array="${RETRY_TASKS:-1-$N}%$MAX_CONCURRENT" \
   --output="$ROOT/SLURM_LOGS/slurm-%x-%A_%a.out" \
   --error="$ROOT/SLURM_LOGS/slurm-%x-%A_%a.err" \
   --export="ALL,PROJECT_ROOT=$PROJECT_ROOT,CONFIG_ROOT=$ROOT,RESULTS_ROOT_OVERRIDE=$RESULTS_ROOT,LABD_DATA_ROOT=$DATA,UNIQUE_ID=labd_ipco,TIMESTAMP=$TIMESTAMP,PROBLEM_CLASSES=$PROBLEM,LABD_MIP_GAP_TARGET=$GAP,LABD_FROZEN_PILOT=1" \
   "$PROJECT_ROOT/my_job.pmedian_nearest.alliance.sbatch")"
 JOB_ID="${out##* }"
 [[ "$JOB_ID" =~ ^[0-9]+$ ]] || { echo "Ambiguous sbatch response: $out" >&2; exit 1; }
-echo "$JOB_ID" > "$ROOT/job_id.txt"
+if [[ -z "$RETRY_TASKS" ]]; then echo "$JOB_ID" > "$ROOT/job_id.txt"; else echo "$JOB_ID $RETRY_TASKS" >> "$ROOT/retry_job_ids.txt"; fi
 echo "SUBMITTED job $JOB_ID ($N tasks). Monitor: squeue -j $JOB_ID"
