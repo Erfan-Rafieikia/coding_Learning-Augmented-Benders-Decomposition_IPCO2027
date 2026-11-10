@@ -65,6 +65,11 @@ def main() -> int:
     p.add_argument("--method", default=IPCO_METHODS[0], choices=IPCO_METHODS)
     p.add_argument("--problem", default="SCFLP", choices=("SCFLP", "SCMND"))
     p.add_argument("--instances", nargs="+", default=["p4"])
+    p.add_argument("--template-instance", default=None,
+                   help="build configs for --instances that are not in the campaign by cloning this "
+                        "instance's configs and changing only the instance file name (e.g. p20)")
+    p.add_argument("--baselines-and-bd-only", action="store_true",
+                   help="with --include-baselines: keep only STANDARD_BD (pilot runs)")
     p.add_argument("--scenarios", type=int, default=500)
     p.add_argument("--ratios", nargs="+", type=float, default=[0.05, 0.15, 0.25])
     p.add_argument("--repair", default="LOCAL")
@@ -85,25 +90,50 @@ def main() -> int:
             raise SystemExit(f"Expected one template task for {what}, found {len(rows)}")
         return rows[0]
 
-    chosen = []          # (template row, kind) with kind in {"ipco", "baseline"}
+    chosen = []          # (template row, kind, new instance or None)
     for inst in args.instances:
-        label = f"{inst}_S{args.scenarios}"
+        new_inst = inst if args.template_instance else None
+        src_inst = args.template_instance or inst
+        label = f"{src_inst}_S{args.scenarios}"
         scflp = [r for r in manifest if r.get("problem") == args.problem and r.get("instance_label") == label]
         if args.include_baselines or args.baselines_only:
             chosen.append((one([r for r in scflp if r.get("method") == "STANDARD_BD"],
-                               f"{label} STANDARD_BD"), "baseline"))
-            for ratio in args.ratios:
+                               f"{label} STANDARD_BD"), "baseline", new_inst))
+            for ratio in ([] if args.baselines_and_bd_only else args.ratios):
                 chosen.append((one([r for r in scflp if r.get("method") == "RANDOM"
                                     and ratio_matches(r.get("selected_ratio", ""), ratio)],
-                                   f"{label} RANDOM ratio {ratio}"), "baseline"))
-        if args.baselines_only:
+                                   f"{label} RANDOM ratio {ratio}"), "baseline", new_inst))
+        if args.baselines_only or args.baselines_and_bd_only:
             continue
         for ratio in args.ratios:
             rows = [r for r in manifest
                     if r.get("problem") == args.problem and r.get("instance_label") == label
                     and r.get("method") == TEMPLATE_METHOD and r.get("repair", "") == args.repair
                     and ratio_matches(r.get("selected_ratio", ""), ratio)]
-            chosen.append((one(rows, f"{label} {TEMPLATE_METHOD} ratio {ratio}"), "ipco"))
+            chosen.append((one(rows, f"{label} {TEMPLATE_METHOD} ratio {ratio}"), "ipco", new_inst))
+
+    # Read (and, for --template-instance, clone and check) every config before creating the root.
+    data_root = Path((template / "source_data_root.txt").read_text().strip())
+    prepared = []
+    for row, kind, new_inst in chosen:
+        src = template / f"configs/task_{int(row['task_id']):04d}.py"
+        text = src.read_text(encoding="utf-8")
+        if new_inst:
+            old_name = f"/{args.template_instance}_stochastic"
+            if text.count(old_name) != 1:
+                raise SystemExit(f"{src}: '{old_name}' must appear exactly once to clone it")
+            cloned = text.replace(old_name, f"/{new_inst}_stochastic")
+            before, after = assignments(text), assignments(cloned)
+            diff = sorted(k for k in set(before) | set(after) if before.get(k) != after.get(k))
+            if diff != ["problem_classes_to_instances"]:
+                raise SystemExit(f"{src}: cloning changed {diff}")
+            for paths in after["problem_classes_to_instances"].values():
+                for rel_path in paths:
+                    if not (data_root / rel_path).is_file():
+                        raise SystemExit(f"Missing data file: {data_root / rel_path}")
+            text = cloned
+            row = dict(row, instance_label=row["instance_label"].replace(f"{args.template_instance}_", f"{new_inst}_", 1))
+        prepared.append((row, kind, new_inst, src, text))
 
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     tag = ("scmnd_" if args.problem == "SCMND" else "") + ("pmedian" if "PMEDIAN" in args.method else "random") + ("_exactfb" if args.method.endswith("_EXACTFB") else "") + ("_v0" if args.method.endswith("_V0") else "")
@@ -129,9 +159,7 @@ def main() -> int:
 
     out_rows = []
     with (root / "task_list.txt").open("w", encoding="utf-8") as task_list:
-        for new_id, (row, kind) in enumerate(chosen, start=1):
-            src = template / f"configs/task_{int(row['task_id']):04d}.py"
-            text = src.read_text(encoding="utf-8")
+        for new_id, (row, kind, new_inst, src, text) in enumerate(prepared, start=1):
             rel = f"configs/task_{new_id:04d}.py"
             if kind == "baseline":
                 # Baselines are copied byte for byte.
