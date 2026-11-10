@@ -48,4 +48,4 @@ out="$(sbatch \
 JOB_ID="${out##* }"
 [[ "$JOB_ID" =~ ^[0-9]+$ ]] || { echo "Ambiguous sbatch response: $out" >&2; exit 1; }
 if [[ -z "$RETRY_TASKS" ]]; then echo "$JOB_ID" > "$ROOT/job_id.txt"; else echo "$JOB_ID $RETRY_TASKS" >> "$ROOT/retry_job_ids.txt"; fi
-echo "SUBMITTED job $JOB_ID ($N tasks). Monitor: squeue -j $JOB_ID"
+echo "SUBMITTED job $JOB_ID (tasks ${RETRY_TASKS:-1-$N}). Monitor: squeue -j $JOB_ID"
